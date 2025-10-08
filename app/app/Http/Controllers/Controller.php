@@ -2,25 +2,11 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
-use App\Models\Produto;
+use Illuminate\Foundation\Auth\Access\AuthorizesRequests;
+use Illuminate\Foundation\Validation\ValidatesRequests;
+use Illuminate\Routing\Controller as BaseController;
 
-class ProductController extends Controller
+class Controller extends BaseController
 {
-    // GET /
-    public function index(Request $req)
-    {
-        $q = trim((string)$req->query('q', ''));
-        $produtos = Produto::query()
-            ->when($q !== '', fn($b) => $b->where('nome', 'like', "%{$q}%"))
-            ->orderBy('nome')
-            ->paginate(6)
-            ->withQueryString();
-
-        // View vai usar $produtos e $q
-        return view('products.index', [
-            'products' => $produtos, // mantendo nome 'products' na view
-            'q'        => $q,
-        ]);
-    }
+    use AuthorizesRequests, ValidatesRequests;
 }

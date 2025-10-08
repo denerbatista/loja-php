@@ -11,7 +11,7 @@ class CartController extends Controller
 {
     private function cart(): array
     {
-        return session('cart', ['items' => [], 'cupom' => null]); // cupom guardado (codigo,tipo,valor)
+        return session('cart', ['items' => [], 'cupom' => null]);
     }
 
     private function save(array $cart): void
@@ -26,64 +26,48 @@ class CartController extends Controller
             $subtotal += $it['preco'] * $it['qty'];
         }
 
-        $desconto = 0.0;
+        $discount = 0.0;
         if (!empty($cart['cupom'])) {
             $c = $cart['cupom'];
-            if ($c['tipo'] === 'percentual') {
-                $desconto = $subtotal * ((float)$c['valor'] / 100.0);
-            } else {
-                $desconto = (float)$c['valor'];
-            }
+            $discount = $c['tipo'] === 'percentual'
+                ? $subtotal * ((float)$c['valor'] / 100.0)
+                : (float)$c['valor'];
         }
 
-        $total = max(0, $subtotal - $desconto);
-        return [$subtotal, $desconto, $total];
+        $total = max(0, $subtotal - $discount);
+        return [$subtotal, $discount, $total];
     }
 
-    // GET /cart
     public function show()
     {
         $cart = $this->cart();
         [$subtotal, $discount, $total] = $this->totals($cart);
-        return view('cart.show', [
-            'cart'     => $cart,
-            'subtotal' => $subtotal,
-            'discount' => $discount,
-            'total'    => $total,
-        ]);
+        return view('cart.show', compact('cart','subtotal','discount','total'));
     }
 
-    // POST /cart/add
     public function add(Request $r)
     {
         $id  = (int)$r->input('id');
         $qty = max(1, (int)$r->input('qty', 1));
-
         $p = Produto::find($id);
         if (!$p) return back()->with('warn', 'Produto não encontrado.');
-
         if ($qty > $p->estoque) return back()->with('warn', 'Estoque insuficiente.');
 
         $cart = $this->cart();
         $curr = $cart['items'][$id]['qty'] ?? 0;
-
-        if ($curr + $qty > $p->estoque) {
-            return back()->with('warn', 'Quantidade excede estoque.');
-        }
+        if ($curr + $qty > $p->estoque) return back()->with('warn', 'Quantidade excede estoque.');
 
         $cart['items'][$id] = [
-            'id'     => $p->id,
-            'nome'   => $p->nome,
-            'preco'  => (float)$p->preco,
-            'qty'    => $curr + $qty,
-            'estoque'=> (int)$p->estoque,
+            'id'      => $p->id,
+            'nome'    => $p->nome,
+            'preco'   => (float)$p->preco,
+            'qty'     => $curr + $qty,
+            'estoque' => (int)$p->estoque,
         ];
-
         $this->save($cart);
         return back()->with('ok', 'Adicionado ao carrinho!');
     }
 
-    // POST /cart/update
     public function update(Request $r)
     {
         $id  = (int)$r->input('id');
@@ -101,7 +85,6 @@ class CartController extends Controller
         return back()->with('ok', 'Quantidade atualizada.');
     }
 
-    // POST /cart/remove
     public function remove(Request $r)
     {
         $id = (int)$r->input('id');
@@ -111,13 +94,10 @@ class CartController extends Controller
         return back()->with('ok', 'Item removido.');
     }
 
-    // POST /cart/apply-coupon
     public function applyCoupon(Request $r)
     {
         $code = trim((string)$r->input('code', ''));
-
         $cupom = Cupom::whereRaw('UPPER(codigo)=UPPER(?)', [$code])->first();
-
         if (!$cupom || !$cupom->estaValidoAgora()) {
             return back()->with('warn', 'Cupom inválido, expirado ou sem usos restantes.');
         }
@@ -125,16 +105,14 @@ class CartController extends Controller
         $cart = $this->cart();
         $cart['cupom'] = [
             'codigo' => $cupom->codigo,
-            'tipo'   => $cupom->tipo,   // 'percentual' | 'valor'
+            'tipo'   => $cupom->tipo,
             'valor'  => (float)$cupom->valor,
-            'id'     => $cupom->id,     // para contar uso no checkout
+            'id'     => $cupom->id,
         ];
-
         $this->save($cart);
         return back()->with('ok', 'Cupom aplicado.');
     }
 
-    // POST /cart/checkout
     public function checkout()
     {
         $cart = $this->cart();
@@ -142,42 +120,29 @@ class CartController extends Controller
 
         DB::beginTransaction();
         try {
-            // 1) Reservar e debitar estoque com lock pessimista
             foreach ($cart['items'] as $it) {
                 $p = Produto::lockForUpdate()->find($it['id']);
                 if (!$p || $p->estoque < $it['qty']) {
-                    throw new \RuntimeException('Estoque mudou e ficou insuficiente: ' . $it['nome']);
+                    throw new \RuntimeException('Estoque mudou e ficou insuficiente: '.$it['nome']);
                 }
-                // debita
                 $p->decrement('estoque', $it['qty']);
             }
 
-            // 2) Se houver cupom, contar uso (respeitando limite)
-            if (!empty($cart['cupom']) && !empty($cart['cupom']['id'])) {
+            if (!empty($cart['cupom']['id'])) {
                 $c = Cupom::lockForUpdate()->find($cart['cupom']['id']);
-                if ($c) {
-                    if (!$c->estaValidoAgora()) {
-                        // se por acaso perdeu a validade agora, prossegue sem cupom
-                    } else {
-                        // valida limite de usos
-                        if (!is_null($c->limite_usos) && $c->usos >= $c->limite_usos) {
-                            // sem usos restantes — prossegue sem cupom
-                        } else {
-                            $c->increment('usos');
-                        }
+                if ($c && $c->estaValidoAgora()) {
+                    if (is_null($c->limite_usos) || $c->usos < $c->limite_usos) {
+                        $c->increment('usos');
                     }
                 }
             }
 
             DB::commit();
-
-            // 3) Limpa carrinho
             $this->save(['items' => [], 'cupom' => null]);
-
             return back()->with('ok', 'Compra finalizada!');
         } catch (\Throwable $e) {
             if (DB::transactionLevel()) DB::rollBack();
-            return back()->with('warn', 'Erro no checkout: ' . $e->getMessage());
+            return back()->with('warn', 'Erro no checkout: '.$e->getMessage());
         }
     }
 }
