@@ -63,6 +63,7 @@ class CartController extends Controller
             'preco'   => (float)$p->preco,
             'qty'     => $curr + $qty,
             'estoque' => (int)$p->estoque,
+            'imagem_url' => $p->imagem_url,
         ];
         $this->save($cart);
         return back()->with('ok', 'Adicionado ao carrinho!');

@@ -5,6 +5,7 @@ use App\Http\Controllers\ProductController;
 use App\Http\Controllers\CartController;
 
 Route::get('/', [ProductController::class, 'index'])->name('products.index');
+Route::get('welcome', function () { return view('welcome');})->name('welcome');
 
 Route::prefix('cart')->group(function () {
     Route::get('/', [CartController::class, 'show'])->name('cart.show');
